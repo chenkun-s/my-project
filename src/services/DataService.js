@@ -1,13 +1,14 @@
-import { v4 as uuidv4 } from 'uuid';
 import Student from '../models/Student';
 import LeaveRecord, { LeaveType } from '../models/LeaveRecord';
 
 class DataService {
   constructor() {
-    this.students = [];
-    this.leaveRecords = [];
     this.listeners = [];
-    this.loadData();
+    // 修改API URL的获取方式，使其能够适应生产环境
+    this.apiUrl = process.env.NODE_ENV === 'production' 
+      ? '/api'  // 生产环境使用相对路径
+      : 'http://localhost:5000/api'; // 开发环境使用localhost
+    this.token = localStorage.getItem('token') || null;
   }
 
   // 添加状态变化监听器
@@ -23,161 +24,331 @@ class DataService {
     this.listeners.forEach(listener => listener());
   }
 
-  // 从localStorage加载数据
-  loadData() {
+  // API请求辅助方法
+  async fetchApi(endpoint, options = {}) {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers
+    };
+
+    if (this.token) {
+      headers['x-auth-token'] = this.token;
+    }
+
+    const response = await fetch(`${this.apiUrl}${endpoint}`, {
+      ...options,
+      headers
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        msg: '请求失败'
+      }));
+      throw new Error(error.msg || '请求失败');
+    }
+
+    return await response.json();
+  }
+
+  // 用户认证
+  async login(username, password) {
     try {
-      const studentsData = localStorage.getItem('students');
-      const leaveRecordsData = localStorage.getItem('leaveRecords');
+      const data = await this.fetchApi('/users/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      });
 
-      if (studentsData) {
-        const parsedStudents = JSON.parse(studentsData);
-        this.students = parsedStudents.map(data => Student.fromJSON(data));
-      } else {
-        // 如果没有数据，添加示例数据
-        this.students = [Student.example];
-      }
-
-      if (leaveRecordsData) {
-        const parsedRecords = JSON.parse(leaveRecordsData);
-        this.leaveRecords = parsedRecords.map(data => LeaveRecord.fromJSON(data));
-      } else {
-        // 如果没有数据，添加示例数据
-        this.leaveRecords = [LeaveRecord.example];
-      }
+      this.token = data.token;
+      localStorage.setItem('token', data.token);
+      return data.user;
     } catch (error) {
-      console.error('加载数据失败:', error);
-      // 出错时使用默认数据
-      this.students = [Student.example];
-      this.leaveRecords = [LeaveRecord.example];
+      throw error;
     }
   }
 
-  // 保存数据到localStorage
-  saveData() {
+  async register(userData) {
     try {
-      localStorage.setItem('students', JSON.stringify(this.students.map(s => s.toJSON())));
-      localStorage.setItem('leaveRecords', JSON.stringify(this.leaveRecords.map(r => r.toJSON())));
+      const data = await this.fetchApi('/users/register', {
+        method: 'POST',
+        body: JSON.stringify(userData)
+      });
+
+      this.token = data.token;
+      localStorage.setItem('token', data.token);
+      return true;
     } catch (error) {
-      console.error('保存数据失败:', error);
+      throw error;
+    }
+  }
+
+  logout() {
+    this.token = null;
+    localStorage.removeItem('token');
+  }
+
+  async getCurrentUser() {
+    try {
+      return await this.fetchApi('/users/me');
+    } catch (error) {
+      this.logout();
+      throw error;
     }
   }
 
   // 学生管理
-  getStudents() {
-    return [...this.students];
+  async getStudents() {
+    try {
+      const students = await this.fetchApi('/students');
+      return students.map(student => new Student({
+        ...student,
+        id: student._id
+      }));
+    } catch (error) {
+      console.error('获取学生列表失败:', error);
+      throw error;
+    }
   }
   
-  importStudents(studentsData) {
-    const originalCount = this.students.length;
-    const newStudents = studentsData.map(data => new Student(data));
-    this.students.push(...newStudents);
-    this.saveData();
-    this.notifyChange();
-    return this.students.length - originalCount;
-  }
-
-  getStudentById(id) {
-    return this.students.find(student => student.id === id) || null;
-  }
-
-  addStudent(studentData) {
-    const student = new Student(studentData);
-    this.students.push(student);
-    this.saveData();
-    this.notifyChange();
-    return student;
-  }
-
-  updateStudent(updatedStudent) {
-    const index = this.students.findIndex(s => s.id === updatedStudent.id);
-    if (index !== -1) {
-      this.students[index] = updatedStudent;
-
-      // 更新相关的请假记录
-      this.leaveRecords.forEach((record, i) => {
-        if (record.student.id === updatedStudent.id) {
-          this.leaveRecords[i].student = updatedStudent;
-        }
+  async importStudents(studentsData) {
+    try {
+      const result = await this.fetchApi('/students/batch', {
+        method: 'POST',
+        body: JSON.stringify(studentsData)
       });
-
-      this.saveData();
+      
       this.notifyChange();
-      return true;
+      return result.success;
+    } catch (error) {
+      console.error('批量导入学生失败:', error);
+      throw error;
     }
-    return false;
   }
 
-  deleteStudent(id) {
-    const initialLength = this.students.length;
-    this.students = this.students.filter(student => student.id !== id);
-    
-    // 删除相关的请假记录
-    this.leaveRecords = this.leaveRecords.filter(record => record.student.id !== id);
-    
-    if (this.students.length !== initialLength) {
-      this.saveData();
+  async getStudentById(id) {
+    try {
+      const student = await this.fetchApi(`/students/${id}`);
+      return new Student({
+        ...student,
+        id: student._id
+      });
+    } catch (error) {
+      console.error(`获取学生(ID: ${id})失败:`, error);
+      return null;
+    }
+  }
+
+  async addStudent(studentData) {
+    try {
+      const student = await this.fetchApi('/students', {
+        method: 'POST',
+        body: JSON.stringify(studentData)
+      });
+      
+      this.notifyChange();
+      return new Student({
+        ...student,
+        id: student._id
+      });
+    } catch (error) {
+      console.error('添加学生失败:', error);
+      throw error;
+    }
+  }
+
+  async updateStudent(updatedStudent) {
+    try {
+      const studentData = { ...updatedStudent };
+      const id = studentData.id;
+      delete studentData.id; // 移除id字段，因为API使用_id
+      
+      const student = await this.fetchApi(`/students/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(studentData)
+      });
+      
       this.notifyChange();
       return true;
+    } catch (error) {
+      console.error('更新学生失败:', error);
+      throw error;
     }
-    return false;
+  }
+
+  async deleteStudent(id) {
+    try {
+      await this.fetchApi(`/students/${id}`, {
+        method: 'DELETE'
+      });
+      
+      this.notifyChange();
+      return true;
+    } catch (error) {
+      console.error('删除学生失败:', error);
+      throw error;
+    }
   }
 
   // 请假记录管理
-  getLeaveRecords() {
-    return [...this.leaveRecords];
+  async getLeaveRecords() {
+    try {
+      const records = await this.fetchApi('/leave-records');
+      return records.map(record => new LeaveRecord({
+        ...record,
+        id: record._id,
+        student: new Student({
+          ...record.student,
+          id: record.student._id
+        })
+      }));
+    } catch (error) {
+      console.error('获取请假记录失败:', error);
+      throw error;
+    }
   }
 
-  getLeaveRecordById(id) {
-    return this.leaveRecords.find(record => record.id === id) || null;
+  async getLeaveRecordById(id) {
+    try {
+      const record = await this.fetchApi(`/leave-records/${id}`);
+      return new LeaveRecord({
+        ...record,
+        id: record._id,
+        student: new Student({
+          ...record.student,
+          id: record.student._id
+        })
+      });
+    } catch (error) {
+      console.error(`获取请假记录(ID: ${id})失败:`, error);
+      return null;
+    }
   }
 
-  addLeaveRecord(recordData) {
-    const record = new LeaveRecord(recordData);
-    this.leaveRecords.push(record);
-    this.saveData();
-    this.notifyChange();
-    return record;
+  async addLeaveRecord(recordData) {
+    try {
+      // 确保student字段是ID而不是对象
+      const data = { ...recordData };
+      if (data.student && typeof data.student === 'object') {
+        data.student = data.student.id;
+      }
+      
+      const record = await this.fetchApi('/leave-records', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+      
+      this.notifyChange();
+      return new LeaveRecord({
+        ...record,
+        id: record._id,
+        student: new Student({
+          ...record.student,
+          id: record.student._id
+        })
+      });
+    } catch (error) {
+      console.error('添加请假记录失败:', error);
+      throw error;
+    }
   }
 
-  updateLeaveRecord(updatedRecord) {
-    const index = this.leaveRecords.findIndex(r => r.id === updatedRecord.id);
-    if (index !== -1) {
-      this.leaveRecords[index] = updatedRecord;
-      this.saveData();
+  async updateLeaveRecord(updatedRecord) {
+    try {
+      const data = { ...updatedRecord };
+      const id = data.id;
+      delete data.id; // 移除id字段，因为API使用_id
+      
+      // 确保student字段是ID而不是对象
+      if (data.student && typeof data.student === 'object') {
+        data.student = data.student.id;
+      }
+      
+      const record = await this.fetchApi(`/leave-records/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      });
+      
       this.notifyChange();
       return true;
+    } catch (error) {
+      console.error('更新请假记录失败:', error);
+      throw error;
     }
-    return false;
   }
 
-  deleteLeaveRecord(id) {
-    const initialLength = this.leaveRecords.length;
-    this.leaveRecords = this.leaveRecords.filter(record => record.id !== id);
-    
-    if (this.leaveRecords.length !== initialLength) {
-      this.saveData();
+  async deleteLeaveRecord(id) {
+    try {
+      await this.fetchApi(`/leave-records/${id}`, {
+        method: 'DELETE'
+      });
+      
       this.notifyChange();
       return true;
+    } catch (error) {
+      console.error('删除请假记录失败:', error);
+      throw error;
     }
-    return false;
   }
 
   // 数据筛选
-  getLeaveRecordsByClass(className) {
-    if (!className) return this.getLeaveRecords();
-    return this.leaveRecords.filter(record => record.student.className === className);
+  async getLeaveRecordsByClass(className) {
+    try {
+      if (!className) return this.getLeaveRecords();
+      
+      const records = await this.fetchApi(`/leave-records/class/${encodeURIComponent(className)}`);
+      return records.map(record => new LeaveRecord({
+        ...record,
+        id: record._id,
+        student: new Student({
+          ...record.student,
+          id: record.student._id
+        })
+      }));
+    } catch (error) {
+      console.error(`获取班级(${className})请假记录失败:`, error);
+      throw error;
+    }
   }
 
-  getLeaveRecordsByType(type) {
-    if (!type) return this.getLeaveRecords();
-    return this.leaveRecords.filter(record => record.type === type);
+  async getLeaveRecordsByStudent(studentId) {
+    try {
+      const records = await this.fetchApi(`/leave-records/student/${studentId}`);
+      return records.map(record => new LeaveRecord({
+        ...record,
+        id: record._id,
+        student: new Student({
+          ...record.student,
+          id: record.student._id
+        })
+      }));
+    } catch (error) {
+      console.error(`获取学生(ID: ${studentId})请假记录失败:`, error);
+      throw error;
+    }
+  }
+  
+  // 前端筛选方法 - 这些方法在前端处理数据筛选
+  async getLeaveRecordsByType(type) {
+    try {
+      if (!type) return this.getLeaveRecords();
+      const records = await this.getLeaveRecords();
+      return records.filter(record => record.type === type);
+    } catch (error) {
+      console.error(`获取请假类型(${type})记录失败:`, error);
+      throw error;
+    }
   }
 
-  getLeaveRecordsByDateRange(startDate, endDate) {
-    return this.leaveRecords.filter(record => {
-      // 检查请假时间段是否与给定日期范围有重叠
-      return (record.startDate <= endDate && record.endDate >= startDate);
-    });
+  async getLeaveRecordsByDateRange(startDate, endDate) {
+    try {
+      const records = await this.getLeaveRecords();
+      return records.filter(record => {
+        // 检查请假时间段是否与给定日期范围有重叠
+        return (record.startDate <= endDate && record.endDate >= startDate);
+      });
+    } catch (error) {
+      console.error('按日期范围获取请假记录失败:', error);
+      throw error;
+    }
   }
 
   // 统计分析

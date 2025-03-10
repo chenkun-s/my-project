@@ -1,6 +1,6 @@
 # 学生请假管理系统
 
-一个专为教师设计的iOS学生请假管理应用，具有扁平化现代UI界面。
+一个专为教师设计的Web版学生请假管理应用，具有现代化UI界面。
 
 ## 功能特点
 
@@ -9,30 +9,49 @@
 - 请假记录管理（添加、编辑、删除请假记录）
 - 按班级、日期、请假类型等筛选请假记录
 - 请假统计与数据分析
-- 扁平化现代UI设计
+- 现代化UI设计
 
 ## 技术栈
 
-- Swift 5
-- SwiftUI
-- Core Data (本地数据存储)
+- React 18
+- Ant Design 5
+- React Router 6
+- Vite (构建工具)
 
 ## 项目结构
 
-- `Models/`: 数据模型
-- `Views/`: UI视图组件
-- `ViewModels/`: 视图模型
-- `Services/`: 业务逻辑服务
-- `Utils/`: 工具类和扩展
-- `Resources/`: 资源文件
+- `src/models/`: 数据模型
+- `src/pages/`: 页面组件
+- `src/services/`: 业务逻辑服务
+- `dist/`: 构建输出目录
 
 ## 安装与使用
 
-1. 使用Xcode打开项目
-2. 选择iOS模拟器或实际设备
-3. 构建并运行应用
+1. 安装依赖：
+   ```
+   npm install
+   ```
+
+2. 开发模式运行：
+   ```
+   npm run dev
+   ```
+
+3. 构建生产版本：
+   ```
+   npm run build
+   ```
+
+4. 预览构建结果：
+   ```
+   npm run preview
+   ```
 
 ## 系统要求
 
-- iOS 15.0+
-- Xcode 13.0+
+- Node.js 14.0+
+- 现代浏览器（Chrome、Firefox、Safari、Edge等）
+
+## 部署
+
+详细的部署指南请参考 [DEPLOYMENT.md](./DEPLOYMENT.md) 文件。
